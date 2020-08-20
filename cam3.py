@@ -8,7 +8,8 @@ import time
 import select
 import subprocess
 import serial
-
+import termios
+import datetime
 
 # requirements: Canon camera with CHDK installed and bootable
 # https://chdk.fandom.com/wiki/CHDK
@@ -18,7 +19,9 @@ import serial
 #### Local defs
 
 # serial port for FIT indicator RGB LED. "None" to disable
-blinkyport = "/dev/ttyACM0"
+#blinkyport = "/dev/ttyACM0"
+# Keeps hanging so f it
+blinkyport = None
 
 # path to your chdkptp installation, including lua stuff
 chdkptp_path = "/home/pi/camscript/chdkptp-r921/"
@@ -28,6 +31,10 @@ chdkptp_path = "/home/pi/camscript/chdkptp-r921/"
 # with sequential numbers for ffmpeg timelapse generation
 img_root = "/home/pi/cam/jpg"
 
+# check for the existence of this file. When it's deleted stop
+# the capture loop. This is how the movie generation process stops
+# the image generation process
+semaphore_fn = "/home/pi/cam/running.txt"
 
 #Reset hub
 # sudo ./usbreset /dev/bus/usb/008/004
@@ -36,20 +43,23 @@ img_root = "/home/pi/cam/jpg"
 class Blinky(object):
     # for setting FIT indicator led
     # Use None as serial port string to disable
-    def __init__(self, serport=None, write_timeout=1.0):
+    def __init__(self, serport=None, write_timeout=0.1):
         if serport is None:
             self.ser = None
             return
-        self.ser = serial.Serial(serport)  # open serial port
+        self.ser = serial.Serial(serport, timeout=write_timeout)  # open serial port
 
     def setc(self,colorstr):
         #self.ser.write(bytes(colorstr,'utf-8'))
         if self.ser is None:
             return
-        self.ser.write(colorstr)
-        self.ser.flush()
-        pass
-
+        try:
+            self.ser.write(colorstr)
+            self.ser.flush()
+        except termios.error:
+            print("Blinky termios error")
+        except serial.SerialException:
+            print("Blinky serial exception")
 
 # class for indicator LED
 led = Blinky(serport=blinkyport)
@@ -110,17 +120,16 @@ result = send_chdkptp(p, b"c\n", pause=1.0)
 led.setc(b"#FF00FF\n")
 
 print("Got connection result: " + str(result))
-
+sys.stdout.flush()
 
 # test this for connection
 
 # set to record mode. Will error if already in rec mode but shruggie. 
 send_chdkptp(p, b"rec\n")
 
-# delete ALL exisiting images on SD card so we con't fill it up (careful!)
-result = send_chdkptp(p, b"imrm\n", 1.0)
-print(str(result))
 
+
+send_chdkptp(p, b"=set_backlight(1)\n") 
 
 # set capture mode P
 #https://chdk.fandom.com/wiki/Script_commands#set_capture_mode.28modenum.29
@@ -133,11 +142,13 @@ send_chdkptp(p, b'=props=require("propcase") set_prop(props.RESOLUTION, 3)\n')
 send_chdkptp(p, b'=props=require("propcase") set_prop(props.QUALITY, 1)\n')
 
 # turn off autofocus and focus at infinity
-send_chdkptp(p, b"=set_aflock(0)\n") 
-send_chdkptp(p, b"=set_focus(3)\n") 
+send_chdkptp(p, b"=set_mf(1)\n") 
+send_chdkptp(p, b"=set_aflock(1)\n") 
+send_chdkptp(p, b"=set_focus(30000)\n") 
 
 # set zoom
-send_chdkptp(p, b"=set_zoom(20)\n") 
+send_chdkptp(p, b"=set_zoom(20)\n")
+
 
 # turn off stabilization
 #send_chdkptp(p, b"=set_aflock(1)\n") 
@@ -149,7 +160,7 @@ p.stdin.flush()
 # shoudl return P
 
 # todo: use =return get_live_histo() to get histogram, set iso/exposure based on that? Needs M mode?
-
+# set clock    set_clock(year, month, day, hour, minute, second) 
 
 imlist  = []
 
@@ -165,13 +176,18 @@ if not os.path.exists(dest_path):
     print("creating jpg dir " + dest_path)
     os.mkdir(dest_path)
 
+# make semaphore file
+open(semaphore_fn, 'a').close()
+time.sleep(1)
+print("loop started at" + str(datetime.datetime.now()))
 
 imcount = 0
 loopcount = 0
 # run forever and wait to be killed by cronjob.
 # a cleaner way is to trap a "kill -15" signal or semaphore...
-while True:
+while os.path.exists(semaphore_fn):
 
+    sys.stdout.flush()
     if error_detected:
         led.setc(b"#FF0000\n")
     else:
@@ -204,6 +220,8 @@ while True:
                     print("mv stderr: " + str(result.stderr))
                     error_detected = True
                 imcount +=1
+                sys.stdout.flush()
+
         else:
             #print("Invalid image name? " + line) 
             pass
@@ -214,6 +232,23 @@ while True:
         # not getting images for some reason
         error_detected = True
 
+# ok here we are done with the loop. Turn off the backlight.
+print("loop terminated at" + str(datetime.datetime.now()))
+
+
+# delete ALL existing images on SD card so we con't fill it up (careful!)
+result = send_chdkptp(p, b"imrm\n", 1.0)
+#print(str(result))
+
+
+time.sleep(60)
+
+result = send_chdkptp(p, b"imrm\n", 1.0)
+#print(str(result))
+
+# turn off backlight to finish
+result = send_chdkptp(p, b"=set_backlight(0)\n") 
+#print(str(result))
 
 
 exit()

@@ -49,27 +49,30 @@ ffcall.append('-r')
 ffcall.append('18')
 # doc: http://ffmpeg.org/ffmpeg.html#crop
 
-# this crops out Sutro
-#ffcall.append('-vf')
-#ffcall.append('crop=800:600:650:400')
-
-# this crops off bottom
-#ffcall.append('-vf')
-#ffcall.append('crop=in_w:1100:0:0')
 
 
 
 #input files, of type 20160903200831.jpg
+ffcall.append('-pattern_type')
+ffcall.append('glob')
 ffcall.append('-i')
-ffcall.append(os.path.join(srcfolder, 'img_%05d.jpg'))
+#ffcall.append("'" + os.path.join(srcfolder, "img_?????.jpg") + "'")
+ffcall.append(os.path.join(srcfolder, "img_?????.jpg"))
 #ffcall.append(os.path.join(srcfolder, 'temp-%5d.jpg'))
+
+# this crops out bright building lights at bottom of screen
+#ffcall.append('-vf')
+#ffcall.append('crop=1280:720:309:185')
+##ffcall.append('crop=1280:720:309:128')
 
 
 # this deshakes
 #x:y:w:h:rx:ry:edge:blocksize:contrast:search:filename
-#ffcall.append('-vf')
-#ffcall.append('deshake=-1:-1:-1:-1:16:16:0:8:100:1:shake.log,crop=800:600:650:400')
-#ffcall.append('deshake=-1:-1:-1:-1:16:16:0:8:100:1:shake.log')
+
+ffcall.append('-vf')
+ffcall.append('deshake=-1:-1:-1:-1:16:16:0:8:100:1:shake.log,crop=1280:720:309:185')
+
+
 
 # output quality
 #ffcall.append('-q:v')
@@ -88,7 +91,7 @@ ffcall.append(vidfile)
 #ffcall.append('800x600')
 
 print("starting movie script")
-
+sys.stdout.flush()
 #mencoder -mc 0 -noskip -skiplimit 0 -ovc lavc -lavcopts \
 #  vcodec=mpeg4:vhq:trell:mbd=2:vmax_b_frames=1:v4mv:vb_strategy=0:vlelim=0:vcelim=0:cmp=6:subcmp=6:precmp=6:predia=3:dia=3:vme=4:vqscale=1 \
 #  "mf://$tmpdir/*.jpg" -mf type=jpg:fps=$fps -o $output
@@ -96,7 +99,9 @@ print("starting movie script")
 
 # make the movie from the temp files
 print(' '.join(ffcall))
-subprocess.call(ffcall,stdout=sys.stdout,stderr=subprocess.STDOUT)
+sys.stdout.flush()
+subprocess.call(ffcall,stdout=sys.stdout,stderr=sys.stderr)
+
 
 # and upload it
 #ftpcall = ['/home/jtf/cam/ftpscript.py',vidfile]
