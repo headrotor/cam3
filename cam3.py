@@ -98,7 +98,10 @@ def send_chdkptp(p, cmd, pause=0.1, verb=True):
             line = p.stdout.readline() 
             if verb:
                 print('got "' + line.decode("utf-8") + '"')
-            result.append(line.decode("utf-8"))
+            if len(line) > 0:
+                result.append(line.decode("utf-8"))
+            else:
+                return result
             #y.register(p.stdout,select.POLLIN)
             time.sleep(pause)
         else:
@@ -220,6 +223,9 @@ while os.path.exists(semaphore_fn):
                     print("mv stderr: " + str(result.stderr))
                     error_detected = True
                 imcount +=1
+                result = send_chdkptp(p, b"imrm\n", 1.0)
+                print(str(result))
+                
                 sys.stdout.flush()
 
         else:
@@ -235,20 +241,29 @@ while os.path.exists(semaphore_fn):
 # ok here we are done with the loop. Turn off the backlight.
 print("loop terminated at" + str(datetime.datetime.now()))
 
+# wait for last download to finish
+time.sleep(10)
 
 # delete ALL existing images on SD card so we con't fill it up (careful!)
 result = send_chdkptp(p, b"imrm\n", 1.0)
 #print(str(result))
 
 
-time.sleep(60)
+time.sleep(600)
 
 result = send_chdkptp(p, b"imrm\n", 1.0)
 #print(str(result))
+sys.stdout.flush()
 
 # turn off backlight to finish
 result = send_chdkptp(p, b"=set_backlight(0)\n") 
-#print(str(result))
+print(str(result))
 
+result = send_chdkptp(p, b"quit\n") 
+print(str(result))
+
+
+print("job finished at" + str(datetime.datetime.now()))
+sys.stdout.flush()
 
 exit()

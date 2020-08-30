@@ -61,16 +61,16 @@ ffcall.append(os.path.join(srcfolder, "img_?????.jpg"))
 #ffcall.append(os.path.join(srcfolder, 'temp-%5d.jpg'))
 
 # this crops out bright building lights at bottom of screen
-#ffcall.append('-vf')
-#ffcall.append('crop=1280:720:309:185')
+ffcall.append('-vf')
+ffcall.append('crop=1280:720:309:185')
 ##ffcall.append('crop=1280:720:309:128')
 
 
 # this deshakes
 #x:y:w:h:rx:ry:edge:blocksize:contrast:search:filename
 
-ffcall.append('-vf')
-ffcall.append('deshake=-1:-1:-1:-1:16:16:0:8:100:1:shake.log,crop=1280:720:309:185')
+#ffcall.append('-vf')
+#ffcall.append('deshake=-1:-1:-1:-1:16:16:0:8:100:1:shake.log,crop=1280:720:309:185')
 
 
 
