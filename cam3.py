@@ -5,11 +5,11 @@
 import sys
 import os
 import time
-import select
 import subprocess
 import serial
 import termios
 import datetime
+import pexpect
 
 # requirements: Canon camera with CHDK installed and bootable
 # https://chdk.fandom.com/wiki/CHDK
@@ -65,97 +65,83 @@ class Blinky(object):
 led = Blinky(serport=blinkyport)
 #led = Blinky(serport=None)
 
+error_detected = False
+
 
 # tell chdkptp where to find its lua stuff
 # should use os.path.join() but this works
 os.putenv("LUA_PATH",  chdkptp_path + "lua/?.lua;;")
 os.putenv("LUA_CPATH", chdkptp_path + "?.so;;")
 
-p = subprocess.Popen([chdkptp_path + "chdkptp"],
-                     shell=True,
-                     stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE,
-                     stderr=subprocess.PIPE)
-#                     bufsize=1)
-#                     universal_newlines=True)
 
-def send_chdkptp(p, cmd, pause=0.1, verb=True):
-    """" send a command to chdk ptp and read response via stdout.
-    TODO: check stderr"""
+child = pexpect.spawn(chdkptp_path + "chdkptp")
+child.logfile = sys.stdout.buffer
+
+child.expect('___> ')
+child.sendline('c')
+try:
+    i = child.expect(['connected:','ERROR: no matching device'])
+except:
+    print("Exception was thrown")
+    print("debug information:")
+    print(str(child))
+
+print(i)
+
+if i == 1:
+    print("Connection error, bye!")
+    child.sendline('quit')
+    time.sleep(1)
+    exit()
     
-    p.stdin.write(cmd + b"\n") 
-    p.stdin.flush()
-
-    time.sleep(pause)
-    y=select.poll()
-    y.register(p.stdout,select.POLLIN)
+child.expect('con')
 
 
-    result = []
+# set to record mode. Will error if already in rec mode but shruggie.
+child.sendline("rec")
+child.expect('con')
 
-    while True:
-        if y.poll(1):
-            line = p.stdout.readline() 
-            if verb:
-                print('got "' + line.decode("utf-8") + '"')
-            if len(line) > 0:
-                result.append(line.decode("utf-8"))
-            else:
-                return result
-            #y.register(p.stdout,select.POLLIN)
-            time.sleep(pause)
-        else:
-            #print("done")
-            #sys.stdout.flush()
-            return result
-
-
-
-error_detected = False
-
-#sudo usbreset "fit_StatUSB"
-
-led.setc(b"F10\n")
-led.setc(b"#FF00FF\n")
-
-# connect to camera.
-result = send_chdkptp(p, b"c\n", pause=1.0)
-led.setc(b"#FF00FF\n")
-
-print("Got connection result: " + str(result))
-sys.stdout.flush()
-
-# test this for connection
-
-# set to record mode. Will error if already in rec mode but shruggie. 
-send_chdkptp(p, b"rec\n")
-
-
-
-send_chdkptp(p, b"=set_backlight(1)\n") 
+# turn on backlight
+child.sendline("=set_backlight(1)") 
+child.expect('con')
 
 # set capture mode P
 #https://chdk.fandom.com/wiki/Script_commands#set_capture_mode.28modenum.29
-send_chdkptp(p, b"=set_capture_mode(2)\n")
+child.sendline("=set_capture_mode(2)")
+child.expect('con')
 
 # set M2 image resolution
-send_chdkptp(p, b'=props=require("propcase") set_prop(props.RESOLUTION, 3)\n')
+child.sendline('=props=require("propcase") set_prop(props.RESOLUTION, 3)')
+child.expect('con')
 
 # set normal (not superfine) image quality
-send_chdkptp(p, b'=props=require("propcase") set_prop(props.QUALITY, 1)\n')
+child.sendline('=props=require("propcase") set_prop(props.QUALITY, 1)')
+child.expect('con')
 
 # turn off autofocus and focus at infinity
-send_chdkptp(p, b"=set_mf(1)\n") 
-send_chdkptp(p, b"=set_aflock(1)\n") 
-send_chdkptp(p, b"=set_focus(30000)\n") 
+child.sendline("=set_mf(1)") 
+child.expect('con')
+child.sendline("=set_aflock(1)") 
+child.expect('con')
+child.sendline("=set_focus(1000)") 
+child.expect('con')
+child.sendline("=set_focus(30000)") 
+child.expect('con')
+child.sendline("=return get_focus()") 
+child.expect('con')
+focus_return = child.before.split(b':')
+if len(focus_return) == 3:
+    focus = int(focus_return[2])
+
+print("got new focus: {}".format(focus))
 
 # set zoom
-send_chdkptp(p, b"=set_zoom(20)\n")
+child.sendline("=set_zoom(20)")
+child.expect('con')
 
+child.sendline("=set_aflock(1)") 
+child.expect('con')
 
-# turn off stabilization
-#send_chdkptp(p, b"=set_aflock(1)\n") 
-p.stdin.flush()
 
 
 # set camera in P mode. otherwise slow...
@@ -166,8 +152,6 @@ p.stdin.flush()
 # set clock    set_clock(year, month, day, hour, minute, second) 
 
 imlist  = []
-
-
 
 # make destination directory based on date....
 datestr = time.strftime('%2y-%3j') #year followed by day in year
@@ -196,37 +180,35 @@ while os.path.exists(semaphore_fn):
     else:
         led.setc(b"#00FF00\n")
 
-    res = send_chdkptp(p, b"shoot -dl\n",pause=1.0)
+    child.sendline("shoot -dl")
+    child.expect('con')
 
     led.setc(b"#0000FF\n")
+    
     # loop through all returned lines, look for image names
+    if b"JPG" in child.before:
+        result = child.before.decode('utf-8')
+        img_fields  = result.split('>')
+        if len(img_fields) > 2:
+            # did we get a valid image name?
+            mv_cmd = ["mv", '-f']
+            # source file
+            mv_cmd.append( img_fields[2].strip())
+            # destination path
+            mv_cmd.append(os.path.join(dest_path, "img_{:05}.jpg".format(imcount)))
 
-    for line in res:
-        if "JPG" in line:
-            img_fields  = line.split('>')
-            if len(img_fields) > 1:
-                # did we get a valid image name?
-                mv_cmd = ["mv", '-f']
-                # source file
-                mv_cmd.append( img_fields[1].strip())
-                # destination path
-                mv_cmd.append(os.path.join(dest_path, "img_{:05}.jpg".format(imcount)))
-                
-                #mvstr = "mv {0} {1}/{0}".format(img_fields[1].strip(), dest_path) 
-                print(" ".join(mv_cmd)) 
+            #mvstr = "mv {0} {1}/{0}".format(img_fields[1].strip(), dest_path) 
+            print(" ".join(mv_cmd)) 
 
-                # mv downloaded image to new place:
-                result = subprocess.run(mv_cmd, capture_output=True)
-                #p#rint("mv stdout: " + str(result.stdout))
-                if len(result.stderr) > 0:
-                    # handle errors here. disk full?
-                    print("mv stderr: " + str(result.stderr))
-                    error_detected = True
-                imcount +=1
-                result = send_chdkptp(p, b"imrm\n", 1.0)
-                print(str(result))
-                
-                sys.stdout.flush()
+            # mv downloaded image to new place:
+            result = subprocess.run(mv_cmd, capture_output=True)
+            #p#rint("mv stdout: " + str(result.stdout))
+            if len(result.stderr) > 0:
+                # handle errors here. disk full?
+                print("mv stderr: " + str(result.stderr))
+                error_detected = True
+            imcount +=1
+            sys.stdout.flush()
 
         else:
             #print("Invalid image name? " + line) 
@@ -239,29 +221,25 @@ while os.path.exists(semaphore_fn):
         error_detected = True
 
 # ok here we are done with the loop. Turn off the backlight.
-print("loop terminated at" + str(datetime.datetime.now()))
+print("loop ended at " + str(datetime.datetime.now()))
 
 # wait for last download to finish
 time.sleep(10)
 
 # delete ALL existing images on SD card so we con't fill it up (careful!)
-result = send_chdkptp(p, b"imrm\n", 1.0)
-#print(str(result))
-
-
-time.sleep(600)
-
-result = send_chdkptp(p, b"imrm\n", 1.0)
-#print(str(result))
-sys.stdout.flush()
+child.sendline("imrm")
+time.sleep(60)
+child.expect('con')
 
 # turn off backlight to finish
-result = send_chdkptp(p, b"=set_backlight(0)\n") 
-print(str(result))
+child.sendline("=set_backlight(0)") 
+child.expect('con')
 
-result = send_chdkptp(p, b"quit\n") 
-print(str(result))
 
+child.sendline("quit")
+time.sleep(1)
+child.terminate()
+child.wait()
 
 print("job finished at" + str(datetime.datetime.now()))
 sys.stdout.flush()
