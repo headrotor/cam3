@@ -118,30 +118,34 @@ child.expect('con')
 child.sendline('=props=require("propcase") set_prop(props.QUALITY, 1)')
 child.expect('con')
 
-# turn off autofocus and focus at infinity
-child.sendline("=set_mf(1)") 
-child.expect('con')
-child.sendline("=set_aflock(1)") 
-child.expect('con')
-child.sendline("=set_focus(1000)") 
-child.expect('con')
-child.sendline("=set_focus(30000)") 
-child.expect('con')
-child.sendline("=return get_focus()") 
-child.expect('con')
-focus_return = child.before.split(b':')
-if len(focus_return) == 3:
-    focus = int(focus_return[2])
-
-print("got new focus: {}".format(focus))
-
 # set zoom
 child.sendline("=set_zoom(20)")
 child.expect('con')
 
-child.sendline("=set_aflock(1)") 
+# turn off autofocus and focus at infinity
+child.sendline("=set_focus(1000)") 
 child.expect('con')
+focus = -1
+child.sendline("=set_mf(1)") 
+child.expect('con')
+child.sendline("=set_aflock(0)") 
+child.expect('con')
+while focus < 40000:
+    time.sleep(1)
+    child.sendline("=set_focus(45000)") 
+    child.expect('con')
+    time.sleep(2)
+    child.sendline("=return get_focus()") 
+    child.expect('con')
+    focus_fields = child.before.split(b':')
+    focus = int(focus_fields[2])
+    print("got new focus: {}".format(focus))
+    
 
+child.sendline("=set_mf(1)") 
+child.expect('con')
+child.sendline("=set_aflock(0)") 
+child.expect('con')
 
 
 # set camera in P mode. otherwise slow...
@@ -170,6 +174,8 @@ print("loop started at" + str(datetime.datetime.now()))
 
 imcount = 0
 loopcount = 0
+# keep track of sd card filenames so we can delete 1 by 1
+delete_list = []
 # run forever and wait to be killed by cronjob.
 # a cleaner way is to trap a "kill -15" signal or semaphore...
 while os.path.exists(semaphore_fn):
@@ -180,6 +186,9 @@ while os.path.exists(semaphore_fn):
     else:
         led.setc(b"#00FF00\n")
 
+    child.sendline("=return get_focus()") 
+    child.expect('con')
+    
     child.sendline("shoot -dl")
     child.expect('con')
 
@@ -189,6 +198,7 @@ while os.path.exists(semaphore_fn):
     if b"JPG" in child.before:
         result = child.before.decode('utf-8')
         img_fields  = result.split('>')
+        
         if len(img_fields) > 2:
             # did we get a valid image name?
             mv_cmd = ["mv", '-f']
@@ -207,6 +217,13 @@ while os.path.exists(semaphore_fn):
                 # handle errors here. disk full?
                 print("mv stderr: " + str(result.stderr))
                 error_detected = True
+
+            img_name = img_fields[1].strip('-')
+            img_fields = img_name.split('\n')
+            # print(" image fields")
+            # print(img_fields)
+            # print(" image fields end ")
+            delete_list.append(img_fields[1])
             imcount +=1
             sys.stdout.flush()
 
@@ -227,10 +244,23 @@ print("loop ended at " + str(datetime.datetime.now()))
 time.sleep(10)
 
 # delete ALL existing images on SD card so we con't fill it up (careful!)
-child.sendline("imrm")
-time.sleep(60)
-child.expect('con')
+# #child.sendline("imrm")
 
+
+# result = -1
+# imcount = 0
+# while result < 1:
+#     result = child.expect(['delete', 'con'], timeout=600)
+#     print(result)
+#     if result == 0:
+#         imcount += 1
+
+
+for img in delete_list:
+    child.sendline("rm " + img) 
+    child.expect('con')
+
+print("{} images deleted ".format(imcount))
 # turn off backlight to finish
 child.sendline("=set_backlight(0)") 
 child.expect('con')
@@ -241,7 +271,7 @@ time.sleep(1)
 child.terminate()
 child.wait()
 
-print("job finished at" + str(datetime.datetime.now()))
+print("job finished at " + str(datetime.datetime.now()))
 sys.stdout.flush()
 
 exit()
